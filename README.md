@@ -1,4 +1,4 @@
-### SATBench: Benchmarking the speed-accuracy tradeoff in object recognition by humans and dynamic neural networks
+# SATBench: Benchmarking the speed-accuracy tradeoff in object recognition by humans and dynamic neural networks
 
 **This repository contains code used in the paper:**
 
