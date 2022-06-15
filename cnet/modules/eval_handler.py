@@ -4,7 +4,6 @@ import sys
 import torch
 import torch.nn.functional as F
 
-
 class SequentialEvalLoop:
   """Evaluation loop for sequential model."""
 
@@ -35,7 +34,7 @@ class SequentialEvalLoop:
     def embedding_hook_fn(module, x, output):  # pylint: disable=unused-argument
       global embedding  # pylint: disable=global-variable-undefined
       embedding = x[0]
-    _ = net.fc.register_forward_hook(embedding_hook_fn)
+    _ = net.module.fc.register_forward_hook(embedding_hook_fn)
 
     for batch_i, (data, targets) in enumerate(loader):
       if self.verbose:
@@ -43,6 +42,7 @@ class SequentialEvalLoop:
         sys.stdout.flush()
         
       # One-hot-ify targets
+      targets = targets.type(torch.int64)
       y = torch.eye(self.num_classes)[targets]
       sample_count += y.shape[0]
 
@@ -109,10 +109,10 @@ class CascadedEvalLoop(object):
       embedding = x[0]
       
     if net.module._multiple_fcs:
-      for i, fc in enumerate(net.fcs):
+      for i, fc in enumerate(net.module.fcs):
         fc.register_forward_hook(embedding_hook_fn)
     else:
-      net.fc.register_forward_hook(embedding_hook_fn)
+      net.module.fc.register_forward_hook(embedding_hook_fn)
     
     batch_losses = []
     batch_correct = []
@@ -122,6 +122,7 @@ class CascadedEvalLoop(object):
         sys.stdout.write(f"\rBatch {batch_i+1}/{len(loader)}")
         sys.stdout.flush()
       # One-hot-ify targets
+      targets = targets.type(torch.int64)
       y = torch.eye(self.num_classes)[targets]
       sample_count += y.shape[0]
 

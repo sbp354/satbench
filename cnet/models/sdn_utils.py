@@ -52,12 +52,13 @@ def compute_inference_costs(data_handler, model_dict, args, verbose=False):
   flops_benchmark.init(net, mode=args.train_mode)
   _ = net(X_sample)
   max_flops = net.compute_total_flops()
+  print("max_flops", max_flops)
   if verbose:
     print(f"max_flops: {max_flops}")
   
   # Compute flops at each IC
   all_flops = []
-  n_ICs = range(1, net.timesteps+1)
+  n_ICs = range(1, net.module.timesteps+1)
   for IC_i in n_ICs:
     net = model_init_op.__dict__[args.model_key](**model_dict)
     flops_benchmark.init(net, mode=args.train_mode, limit=IC_i)

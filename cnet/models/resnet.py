@@ -12,7 +12,7 @@ import functools
 import numpy as np
 import torch.nn as nn
 from collections import OrderedDict
-from torchvision.models.utils import load_state_dict_from_url
+from torch.hub import load_state_dict_from_url
 from models import custom_ops
 from models import layers as res_layers
 from models import model_utils
@@ -99,7 +99,10 @@ class ResNet(nn.Module):
     # Weight initialization
     for m in self.modules():
       if isinstance(m, nn.Conv2d):
-        nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+        #print(m.weight.device)
+        nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu").to('cuda')
+        m.weight.to('cuda:0')
+        #print(m.weight.device)
       elif isinstance(m, (self._norm_layer, nn.GroupNorm)):
         nn.init.constant_(m.weight, 1)
         nn.init.constant_(m.bias, 0)
@@ -129,7 +132,7 @@ class ResNet(nn.Module):
       downsample = nn.Sequential(
           custom_ops.conv1x1(self.inplanes, planes * block.expansion, stride),
       )
-    layers = []
+    layers = nn.ModuleList()
     layers.append(
         block(
           self.res_layer_count,
@@ -251,7 +254,9 @@ class ResNet(nn.Module):
     
     
 def make_resnet(arch, block, layers, pretrained, **kwargs):
+  print(kwargs.get("imagenet_pretrained"))
   if kwargs.get("imagenet_pretrained", False):
+    print("USING PRETRAINED MODEL")
     assert arch in _MODEL_URLS, f"{arch} not found in _MODEL_URLS"
     
     # Save specified num_classes and switch to imagenet # classes
@@ -260,11 +265,16 @@ def make_resnet(arch, block, layers, pretrained, **kwargs):
     
     # Load model
     model = ResNet(arch, block, layers, **kwargs)
-    model = nn.DataParallel(model)
+    #model = nn.DataParallel(model, device_ids = [0,1]).cuda()
+    model = nn.DataParallel(model).cuda()
 
     # Load imagenet state dict
     state_dict = load_state_dict_from_url(_MODEL_URLS[arch])
-    
+    print("MODELS_URL", _MODEL_URLS[arch])
+    #for k in state_dict.keys():
+    #  print(k, state_dict[k].size())
+    #for k in state_dict.keys():
+    #  print(k, state_dict[k].size())
     # Adjust names from loaded state_dict to match our model
     new_dict = OrderedDict()
     for k, v in state_dict.items():
@@ -285,17 +295,22 @@ def make_resnet(arch, block, layers, pretrained, **kwargs):
       if kwargs["cascaded"] and "running_" in k:
         v = v.unsqueeze(dim=0).repeat(model.timesteps, 1)
       new_dict[k] = v
+      #print(k, new_dict[k].size())
+      #if new_dict[k].size() != state_dict[k].size():
+      #  print(k, new_dict[k].size(), state_dict[k].size())
     
     # Load imagenet state dict into our model
-    model.load_state_dict(new_dict)
+    model.module.load_state_dict(new_dict)
     print("Success: Loaded pretrained state dict!")
 
     # Replace final layer to correct # class mapping
-    num_ftrs = model.fc.in_features
-    model.fc = InternalClassifier(num_ftrs, num_classes)  # nn.Linear(num_ftrs, num_classes)
+    num_ftrs = model.module.fc.in_features
+    model.module.fc = InternalClassifier(num_ftrs, num_classes)  # nn.Linear(num_ftrs, num_classes)
   else: 
+    print("NOT USING PRETRAINED MODEL")
     model = ResNet(arch, block, layers, **kwargs)
-    model = nn.DataParallel(model)
+    #model = nn.DataParallel(model, device_ids = [0,1]).cuda()
+    model = nn.DataParallel(model).cuda()
     if pretrained:
       model = model_utils.load_model(model, kwargs)
   

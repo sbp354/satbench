@@ -5,9 +5,12 @@ import glob
 import numpy as np
 import os
 import sys
-import torch
+import torch, gc
 from collections import defaultdict, OrderedDict
 from datasets.dataset_handler import DataHandler
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.multiprocessing as mp
+import torch.distributed as dist
 from models import densenet
 from models import resnet
 from models import sdn_utils
@@ -16,6 +19,7 @@ from modules import losses
 from modules import train_handler
 from modules import utils
 from torch import optim
+import time
 
 
 def setup_args():
@@ -34,6 +38,8 @@ def setup_args():
   # Dataset
   parser.add_argument("--dataset_root", type=str, required=True,
                       help="Dataset root")
+  parser.add_argument("--test_dataset_root", type = str, 
+                      help="Dataset root for human testing data")
   parser.add_argument("--dataset_name", type=str, required=True,
                       help="Dataset name: CIFAR10, CIFAR100, TinyImageNet")
   parser.add_argument("--split_idxs_root", type=str, default="split_idxs",
@@ -92,7 +98,20 @@ def setup_args():
                       help="Use all internal classifiers")
   parser.add_argument("--multiple_fcs", action="store_true", default=False,
                       help="One FC per timestep")
-  
+  parser.add_argument("--grayscale", action="store_true", default=False,
+                      help="Transform images to grayscale")
+  parser.add_argument("--gauss_noise", action="store_true", default=False,
+                      help="Add gaussian noise to images for training and testing")
+  parser.add_argument("--gauss_noise_std", type=float,
+                      help="Standard deviation of gaussian noise to apply when args.gauss_noise = true")
+  parser.add_argument("--blur", action="store_true", default=False,
+                      help="Add gaussian blur to images for testing and training")
+  parser.add_argument("--blur_std", type=float,
+                      help="Standard deviation of gaussian blur to apply when args.gauss_blur = true")
+  parser.add_argument("--blur_range",nargs="+", type=float,
+                      help = "Range of blur_std values to sample over when training" )
+  parser.add_argument("--gauss_noise_train_range",nargs="+", type=float,
+                      help = "Range of gaussian noise std values to sample over when training" )
   
   # Optimizer
   parser.add_argument("--learning_rate", type=float, default=0.1,
@@ -169,6 +188,11 @@ def setup_output_dir(args, save_args_to_root=True):
   out_basename += f",wd_{args.weight_decay}"
   out_basename += f",seed_{args.random_seed}"
   
+  print("ARGS.BLUR:", args.blur)
+  print("ARGS.GAUSS_NOISE:", args.gauss_noise)
+  print("ARGS.GAUSS_NOISE_STD:", args.gauss_noise_std)
+  print("ARGS.GAUSS_NOISE_TRAIN_RANGE:", args.gauss_noise_train_range)
+
   if args.train_mode in ["sdn", "cascaded"] and args.use_pretrained_weights:
     out_basename += f",pretrained_weights"
   
@@ -177,7 +201,21 @@ def setup_output_dir(args, save_args_to_root=True):
     
   if args.tau_weighted_loss:
     out_basename += ",tau_weighted"
-    
+  
+  if args.grayscale:
+    out_basename += ",grayscale"
+  
+  if args.gauss_noise:
+    if len(args.gauss_noise_train_range)> 0:
+      noise_range = '_'.join([str(s) for s in args.gauss_noise_train_range])
+      out_basename += f",random_gauss_noise_{noise_range}"
+    else:
+      out_basename += f",random_gauss_noise"
+  
+  print("BLUR STD", args.blur_std)
+  if args.blur:
+    out_basename += f",random_gauss_blur"
+  
   save_root = os.path.join(
     args.experiment_root,
     args.experiment_name,
@@ -200,24 +238,34 @@ def setup_dataset(args):
   data_dict = {
       "dataset_name": args.dataset_name,
       "data_root": args.dataset_root,
+      "test_dataset_root":args.test_dataset_root,
       "experiment_root": args.experiment_root, 
+      "grayscale": args.grayscale,#pg_grayscale
+      "gauss_noise": args.gauss_noise,
+      "gauss_noise_std": args.gauss_noise_std,
+      "blur": args.blur,
+      "blur_std":args.blur_std,
+      "blur_range": args.blur_range,
+      "gauss_noise_train_range": args.gauss_noise_train_range,
       "val_split": args.val_split,
       "test_split": args.test_split,
       "split_idxs_root": args.split_idxs_root,
       "noise_type": args.augmentation_noise_type,
       "load_previous_splits": True,
       "imagenet_params": {
-        #"target_classes": [],
-        "max_classes": 1000,
+        "target_classes": ['airplane', 'bicycle', 'boat', 'car', 'chair', 'dog', 'keyboard', 'oven',
+                           'bear', 'bird', 'bottle', 'cat', 'clock', 'elephant', 'knife', 'truck'],
+        "max_classes": 16,
       }
   }
+  print("TRAIN DATA_DICT", data_dict)
   data_handler = DataHandler(**data_dict)
 
   # Set Loaders
   loaders = {
       "train": data_handler.build_loader("train", args),
       "val": data_handler.build_loader("val", args),
-      "test": data_handler.build_loader("test", args),
+      "test": data_handler.build_loader("test", args)
   }
   print("Data handler loaded.")
   
@@ -229,7 +277,7 @@ def setup_model(data_handler, device, args, save_root=""):
   model_dict = {
       "seed": args.random_seed,
       "num_classes": data_handler.num_classes,
-      "pretrained": False,
+      "pretrained": args.use_pretrained_weights,
       "train_mode": args.train_mode,
       "cascaded": args.cascaded,
       "cascaded_scheme": args.cascaded_scheme,
@@ -242,8 +290,8 @@ def setup_model(data_handler, device, args, save_root=""):
           "temporal_affine": args.bn_time_affine,
           "temporal_stats": args.bn_time_stats,
       },
-      "imagenet": args.dataset_name == "ImageNet2012",
-      "imagenet_pretrained": args.dataset_name == "ImageNet2012" and args.use_imagenet_pretrained_weights,
+      "imagenet": str.find(args.dataset_name, "ImageNet2012")>-1,
+      "imagenet_pretrained": args.dataset_name == "ImageNet2012" and args.use_pretrained_weights,
       "n_channels": 1 if args.dataset_name == "FashionMNIST" else 3
   }
 
@@ -254,15 +302,16 @@ def setup_model(data_handler, device, args, save_root=""):
     model_init_op = densenet
 
   # Initialize net
-  print("current device", torch.cuda.current_device())
-  print("device count", torch.cuda.device_count())
   print("Instantiating model...")
+
+  #dist.init_process_group("NCCL", rank = device, world_size = world_size)
   net =model_init_op.__dict__[args.model_key](**model_dict).to(device)
-  print(type(net))
+  
   print("Model instantiated.")
   
   # Compute inference costs if ic_only / SDN
   if args.train_mode in ["ic_only", "sdn"]:
+    print("COMPUTING INFERENCE COSTS")
     all_flops, normed_flops = sdn_utils.compute_inference_costs(
       data_handler, 
       model_dict, 
@@ -309,7 +358,7 @@ def condition_model(save_root, args):
   # Check mode and load optimizer
   if (args.train_mode == "ic_only" 
       or (args.train_mode in ["sdn", "cascaded"] and args.use_pretrained_weights)):
-    if not args.use_pretrained_weights:
+    if not args.use_pretrained_weights and args.train_mode not in ['cascaded']:
       baseline_ckpt_path = get_baseline_ckpt_path(save_root, args)
       assert os.path.exists(baseline_ckpt_path), (
         f"Path does not exist: {baseline_ckpt_path}")
@@ -378,24 +427,27 @@ def condition_model(save_root, args):
 
 
 def main(args):
+  #os.environ['CUDA_VISIBLE_DEVICES']=args.device
   # Make reproducible
   utils.make_reproducible(args.random_seed)
 
   # Set Device
+  gc.collect()
+  torch.cuda.empty_cache()
   device = torch.device(
-    args.device
+  args.device
     if torch.cuda.is_available() and not args.use_cpu
     else "cpu"
   )
 
   # Setup output directory
-  #save_root = setup_output_dir(args)
+  save_root = setup_output_dir(args)
 
   # Setup dataset loader
   data_handler, loaders = setup_dataset(args)
   
   # Setup model
-  save_root = ""
+  #save_root = ""
   net = setup_model(data_handler, device, args, save_root=save_root)
 
   # Condition model and get handler opts
@@ -422,10 +474,12 @@ def main(args):
   # Criterion
   criterion = losses.categorical_cross_entropy
 
-
   # train and eval functions
   print("Setting up train and eval functions...")
+  print("data handler num_classes: ", data_handler.num_classes)
+
   train_fxn = train_handler.get_train_loop(
+    #net.module.timesteps,
     net.module.timesteps,
     data_handler.num_classes,
     args,
@@ -433,6 +487,7 @@ def main(args):
   )
   
   eval_fxn = eval_handler.get_eval_loop(
+    #net.module.timesteps,
     net.module.timesteps,
     data_handler.num_classes,
     cascaded=args.cascaded,
@@ -453,9 +508,13 @@ def main(args):
   # Main training loop
   try:
     print("Training network...")
+    #for name, param in net.named_parameters():
+    #    print(name, param.device)
     for epoch_i in range(args.n_epochs):
       print(f"\nEpoch {epoch_i+1}/{args.n_epochs}")
       # Train net
+      start_time = time.time()
+
       train_loss, train_acc = train_fxn(
         net, 
         loaders["train"], 
@@ -464,6 +523,7 @@ def main(args):
         optimizer, 
         device,
       )
+      end_time = time.time()
 
       # Log train metrics
       metrics["train"]["loss"].append((epoch_i, train_loss))
@@ -481,7 +541,8 @@ def main(args):
         train_acc_val = np.mean(train_acc, axis=0)[-1] * 100
 
       stdout_str = (f"\nAvg. Train Loss: {train_loss_val:0.6f} -- "
-                    f"Avg. Train Acc: {train_acc_val:0.2f}%")
+                    f"Avg. Train Acc: {train_acc_val:0.2f}%"
+                    f"Train time: {end_time-start_time}")
 
       if epoch_i % args.eval_freq == 0:
         # Evaluate net
