@@ -21,7 +21,9 @@ Our contributions are as follows:
 ## Dataset
 Our human dataset is collected using a reaction time paradigm proposed by McElree & Carrasco [2] where observers are forced to respond at a beep which sounds at a specific time after target presentation. Varying the beep interval across several blocks helps us collect object recognition data across different reaction times (`500ms`, `900ms`, `1100ms`, `1300ms`, `1500ms`). We evaluate dynamic neural networks using the same paradigm with computational FLOPs used as an analog for reaction time.
 
-Human dataset and network results can be found at https://osf.io/2cpmb/. The `human_data_analysis/` directory above contains code for analysis and visualization of human data across all experimental conditions.
+Human dataset and network results can be found at https://osf.io/2cpmb/. Download and unzip `human-data.zip` and `model_data.zip` for human and network data respectively.
+
+The `human_data_analysis/` directory above contains code for analysis and visualization of human data across all experimental conditions.
 
 ## Code
 We benchmark 4 dynamic neural network models - MSDNet [2] , SCAN [3], Cascaded-Nets (CNets) [4]  and ConvRNN [3] on our dataset. The following table mentions the scripts to be used for training and inference of each model. We used code for each model from existing/official implementations (links given below):
@@ -34,10 +36,7 @@ ConvRNN: https://github.com/cjspoerer/rcnn-sat
 
 CNet: https://github.com/michael-iuzzolino/CascadedNets
 
-Code for each model is available in a subdirectory with the model's name. Documentation, instructions for training and inference and links to pretrained models are provided in separate README files for each model.
-
-## Citations
-If you use any of the data or code in our repository, please cite us as follows:
+Code for each model is available in a subdirectory with the model's name. Documentation, instructions for training and inference and links to pretrained networks will be added soon for all models in their respective README.md files.
 
 ## Reference
 [1] Russakovsky, O., Deng, J., Su, H., Krause, J., Satheesh, S., Ma, S., ... & Fei-Fei, L. (2015). Imagenet large scale visual recognition challenge. International journal of computer vision, 115(3), 211-252.
