@@ -11,11 +11,58 @@ pip install -r requirements.txt
 ```
 
 ## Training
+This reposiotry supports training on a 16 class subset of the ImageNet2012 dataset initially developed here [https://github.com/rgeirhos/generalisation-humans-DNNs] under 4 different image perturbation regimes:
+* color (default - no perturbations applied)
+* grayscale 
+* gaussian noise applied to grayscale images
+* gaussian blur filter applied to color images
+
 Use `train.sh` as a template to set your own hyperparameters, which launches `train.py`.
-In `train.sh`, be sure to specify `DATASET_ROOT`, `EXPERIMENT_ROOT`, and `SPLIT_IDXS_ROOT` to locations on you system where your datasets are located, where you want the output from `train.py` to be written (contains ckpt files, etc.), and the location for the dataset `split_idxs` (train, val, test splits) for reproducibility and consistency, respectively.
+Below are shell commands you can run to replicate training for the above perturbations where:
+* DATASET_ROOT = parent directory for imagenet data. Should have at least subdirectory train
+* EXPERIMENT_ROOT = parent output directory for storing model outputs and results (subdirectories for different types of experiments are generated automatically during run time)
+* SPLIT_IDX_ROOT = directory for storing train/val idx splits for reproducibility and consistency
+* HUMAN_DATA_DIR = directory where you have downloaded the test data provided by this repository
 
-To train the model(s), run the `train.sh` script.
+Note that the arguments passed in the following shell commands specify key directories, the type of CNet model to run (parallel or serial), temporal difference hyperparameter (lambda) and the image perturbation regime. The current hyperparameters in train.sh are configured to reproduce results in this paper but can be adjusted as needed or desired. Additionally, we include examples for reproducing results with the parallel and serial CNet architectures.
 
+### Color
+Parallel Architecture
+```
+bash train.sh DATASET_ROOT EXPERIMENT_ROOT SPLIT_IDX_ROOT HUMAN_DATA_DIR parallel 1.0 false false false
+```
+Serial Architecture
+```
+bash train.sh DATASET_ROOT EXPERIMENT_ROOT SPLIT_IDX_ROOT HUMAN_DATA_DIR serial 0.0 false false false
+```
+
+### Grayscale
+Parallel Architecture
+```
+bash train.sh DATASET_ROOT EXPERIMENT_ROOT SPLIT_IDX_ROOT HUMAN_DATA_DIR parallel 1.0 true false false
+```
+Serial Architecture
+```
+bash train.sh DATASET_ROOT EXPERIMENT_ROOT SPLIT_IDX_ROOT HUMAN_DATA_DIR serial 0.0 true false false
+```
+### Gaussian Noise on Grayscale Images
+Parallel Architecture
+```
+bash train.sh DATASET_ROOT EXPERIMENT_ROOT SPLIT_IDX_ROOT HUMAN_DATA_DIR parallel 1.0 true true false
+```
+Serial Architecture
+```
+bash train.sh DATASET_ROOT EXPERIMENT_ROOT SPLIT_IDX_ROOT HUMAN_DATA_DIR serial 0.0 true true false
+```
+### Gaussian Blur on Color Images
+Parallel Architecture
+```
+bash train.sh DATASET_ROOT EXPERIMENT_ROOT SPLIT_IDX_ROOT HUMAN_DATA_DIR parallel 1.0 true true false
+```
+Serial Architecture
+```
+bash train.sh DATASET_ROOT EXPERIMENT_ROOT SPLIT_IDX_ROOT HUMAN_DATA_DIR serial 0.0 true true false
+```
 
 ## Evaluation
 Use `eval.sh` to load and evaluate the model stored in `EXPERIMENT_NAME`. This script will evaluate the performance of the model and, if `--keep_logits` is specified, generate and store the logits for all examples in the specified dataset. The logits are useful for downstream tasks, such as training metacognition models.
