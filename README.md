@@ -32,6 +32,8 @@ SCAN: https://github.com/ArchipLab-LinfengZhang/pytorch-scalable-neural-networks
 
 ConvRNN: https://github.com/cjspoerer/rcnn-sat
 
+CNet: https://github.com/michael-iuzzolino/CascadedNets
+
 Code for each model is available in a subdirectory with the model's name. Documentation, instructions for training and inference and links to pretrained models are provided in separate README files for each model.
 
 ## Citations
