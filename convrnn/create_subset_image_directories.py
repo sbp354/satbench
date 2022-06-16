@@ -5,14 +5,29 @@ from collections import defaultdict, Counter
 import glob
 import json
 import shutil
+import numpy as np
+import argparse
 
 _JSON_URL = 'https://s3.amazonaws.com/deep-learning-models/image-models/imagenet_class_index.json'
 
-root = "/scratch/work/public/imagenet"
-experiment_root = '/scratch/sbp354/cascade_output/experiments'
-output_dir = '/scratch/sbp354/SAT_human_data/ImageNet'
-vast_dir = '/vast/sbp354/ImageNet'
-split_idxs_root = "/scratch/sbp354/dynamic-nn/convrnn/split_idx"
+
+def setup_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset_root", type=str, required = True,
+                        help="Root directory for ImageNet data (should be one level above train)")
+    
+    parser.add_argument("--experiment_root", type=str,required = True,
+                        help="Directory where 16 class ImageNet subset image_names/ mappings has been saved")
+    
+    parser.add_argument("--new_dataset_root", type = str, required = True,
+                        help = "Root directory where subsetted 16 class data will be stored")
+    
+    parser.add_argument("--split_idxs_root", type=str, required = True,
+                      help="directory ")
+    
+    args = parser.parse_args()
+    return args
+
 
 def split_dataset(path_df, val_split=0.1, test_split=0, split_idxs_root=""):
   if not split_idxs_root:
@@ -77,15 +92,6 @@ class Imagenet16Labels:
             self.label_to_cls[class_name] = n_file
             self.train_classes.append(n_file)
 
-    #data = {int(key): val for key, val in data.items()}
-    #self.idx_to_class = {key: val[0] for key, val in data.items()}
-    #self.idx_to_label = {key: val[1] for key, val in data.items()}
-
-    #self.cls_to_idx = {val[0]: key for key, val in data.items()}
-    #self.label_to_idx = {val[1]: key for key, val in data.items()}
-
-    #self.cls_to_label = {val[0]: val[1] for key, val in data.items()}
-    #self.label_to_cls = {val: key for key, val in self.cls_to_label.items()}
 
     self.num_classes = 16
     del df
@@ -136,7 +142,6 @@ def build_path_df(root, experiment_root, subdir='train'):
     # Class dirs
     class_dirs = glob.glob(f'{dataset_path}/*')
     df_dict = defaultdict(list)
-    print(label_handler.train_classes)
     for class_dir in class_dirs:
         class_id = class_dir[str.find(class_dir, "/n")+1:]
         if class_id in(label_handler.train_classes):
@@ -152,62 +157,88 @@ def build_path_df(root, experiment_root, subdir='train'):
 
     return path_df
 
-path_df = build_path_df(root, experiment_root)
+def main(args):
+  path_df = build_path_df(args.dataset_root, args.experiment_root)
 
-if os.path.exists(os.path.join(split_idxs_root, '0.1-0_val_test_split.json')):
-  print(f"loading split_locs from {os.path.join(split_idxs_root, '0.1-0_val_test_split.json')}", flush = True)
-  split_locs = json.load(open(os.path.join(split_idxs_root, '0.1-0_val_test_split.json')))
-else:
-  split_locs = split_dataset(path_df, val_split=0.1, test_split=0, split_idxs_root=split_idxs_root)
+  #Create or load train/test splits. We first load the full training population using path_df and then we apply the train/test split
+  if os.path.exists(os.path.join(split_idxs_root, '0.1-0_val_test_split1.json')):
+    print(f"loading split_locs from {os.path.join(split_idxs_root, '0.1-0_val_test_split.json')}", flush = True)
+    split_locs = json.load(open(os.path.join(split_idxs_root, '0.1-0_val_test_split.json')))
+  else:
+    split_locs = split_dataset(path_df, val_split=0.1, test_split=0, split_idxs_root=split_idxs_root)
 
-train_df = path_df.loc[split_locs["train"]]
-val_df = path_df.loc[split_locs["val"]]
+  #There are 1000 ImageNet subclasses that get aggregated into 16 super classes for purposes of this data subsetting. 
+  # Therefore we need to map the subclasses to super classes
 
-print(f"# instances in training dataset: {len(train_df)}", flush = True)
-print(f"# instances in val dataset: {len(val_df)}",flush = True)
+  #get list of superclass labels from 16class directory
+  label_map = {}
+  super_labels = [i[:-4] for i in os.listdir(os.path.join(args.experiment_root, 'image_names'))]
+  print(f"Super labels: {super_labels}")
+  for l in super_labels:
+    #Create new subdirectories in new_dataset_root for train and val
+    if os.path.exists(os.path.join(args.new_dataset_root, 'train', l)) == False:
+          os.makedirs(os.path.join(args.new_dataset_root, 'train', l))
+    if os.path.exists(os.path.join(args.new_dataset_root, 'val', l)) == False:
+          os.makedirs(os.path.join(args.new_dataset_root, 'val', l))
+    print(f"New train subdirectories: {os.listdir(os.path.join(args.new_dataset_root, 'train'))}")
+    print(f"New val subdirectories: {os.listdir(os.path.join(args.new_dataset_root, 'val'))}")
+    
+    label_imgs = pd.read_csv(os.path.join(args.experiment_root, 'image_names',f'{l}.txt'), names = ['image_name'] )
+    label_imgs['class'] = label_imgs['image_name'].apply(lambda x: x[:9])
+    sub_classes = label_imgs['class'].unique().tolist()
+    for sub in sub_classes:
+      label_map[sub] = l
 
-print(train_df.head())
-train_df.sort_values(['class_id'], inplace = True)
-train_classes = train_df.class_id.unique()
+  train_df = path_df.loc[split_locs["train"]]
+  val_df = path_df.loc[split_locs["val"]]
+  
+  print(f"# instances in training dataset: {len(train_df)}", flush = True)
+  print(f"# instances in val dataset: {len(val_df)}",flush = True)
 
-val_df.sort_values(['class_id'], inplace = True)
-val_classes = val_df.class_id.unique()
-'''
-print(f"# train classes: {len(train_classes)}")
-for i,cls in enumerate(train_classes):
-    print(f"CLASS {cls} # {i}: {cls}")
-    temp_cls_dir = os.path.join(vast_dir, 'train', cls)
-    print("TRAINING",flush = True)
-    print(f"Making temporary directory : {temp_cls_dir}",flush = True)
-    if os.path.exists(temp_cls_dir) == False:
-        os.makedirs(temp_cls_dir)
-    sub_train_df = train_df[train_df['class_id']==cls]
-    print(f"Adding {len(sub_train_df)} files to {temp_cls_dir}", flush = True)
+  train_df.sort_values(['class_id'], inplace = True)
+  train_classes = train_df.class_id.unique()
 
-    for img_path in sub_train_df.path.tolist():
-        img_file = img_path[str.rfind(img_path, '/')+1:]
-        try:
-          shutil.copyfile(img_path, os.path.join(temp_cls_dir, img_file))
-        except:
-          print(f"Issue copying {img_path}")
-'''
-print(f"# val classes: {len(val_classes)}")
-for i, cls in enumerate(val_classes):
-    print(f"CLASS {cls} # {i}")
-    temp_cls_dir = os.path.join(vast_dir, 'val', cls)
-    if os.path.exists(temp_cls_dir) == False:
-        os.makedirs(temp_cls_dir)
-    print("VALIDATION",flush = True)
-    print(f"Making temporary directory : {temp_cls_dir}",flush = True)
-    sub_val_df = val_df[val_df['class_id']==cls]
-    print(f"Adding {len(sub_val_df)} files to temp directory",flush = True)
+  val_df.sort_values(['class_id'], inplace = True)
+  val_classes = val_df.class_id.unique()
 
-    for img_path in sub_val_df.path.tolist():
-        img_file = img_path[str.rfind(img_path, '/')+1:]
-        try:
-          shutil.copyfile(img_path, os.path.join(temp_cls_dir, img_file))
-        except:
-          print(f"Issue copying {img_path}")
-    print(f"{len(os.listdir(temp_cls_dir))} image files added to {temp_cls_dir}",flush = True)
-    #tar_val.add(temp_cls_dir, recursive = True)    
+  
+  for i,cls in enumerate(train_classes):
+      print(f"CLASS {cls} # {i}: {cls}")
+      cls_dir = os.path.join(args.new_dataset_root, 'train', label_map[cls])
+      print("TRAINING",flush = True)
+      print(f"Outputting to super directory : {cls_dir}",flush = True)
+      sub_train_df = train_df[train_df['class_id']==cls]
+      print(f"Adding {len(sub_train_df)} files to {cls_dir}", flush = True)
+
+      for img_path in sub_train_df.path.tolist():
+          img_file = img_path[str.rfind(img_path, '/')+1:]
+          try:
+            shutil.copyfile(img_path, os.path.join(cls_dir, img_file))
+          except:
+            print(f"Issue copying {img_path}")
+      print(f"{len(os.listdir(cls_dir))} now in {cls_dir}",flush = True)
+
+  for i, cls in enumerate(val_classes):
+      print(f"CLASS {cls} # {i}: {cls}")
+      cls_dir = os.path.join(args.new_dataset_root, 'val', label_map[cls])
+      cls_dir = os.path.join(vast_dir, 'val', cls)
+      
+      print("VALIDATION",flush = True)
+      print(f"Outputting to super directory : {cls_dir}",flush = True)
+      sub_val_df = val_df[val_df['class_id']==cls]
+      print(f"Adding {len(sub_val_df)} files to {cls_dir}",flush = True)
+
+      for img_path in sub_val_df.path.tolist():
+          img_file = img_path[str.rfind(img_path, '/')+1:]
+          try:
+            shutil.copyfile(img_path, os.path.join(cls_dir, img_file))
+          except:
+            print(f"Issue copying {img_path}")
+      print(f"{len(os.listdir(cls_dir))} now in {cls_dir}",flush = True)
+
+
+if __name__ == "__main__":
+  args = setup_args()
+  main(args)
+         
 
