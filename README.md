@@ -2,7 +2,7 @@
 
 **This repository contains code used in the paper:**
 
-"SATBench: Benchmarking the speed-accuracy tradeoff in object recognition by humans and dynamic neural networks" by Ajay Subramanian, Omkar Kumbhar, Elena Sizikova, Najib J. Majaj, Denis G. Pelli (New York University, 2022).
+"SATBench: Benchmarking the speed-accuracy tradeoff in object recognition by humans and dynamic neural networks" by Ajay Subramanian, Sara Price, Omkar Kumbhar, Elena Sizikova, Najib J. Majaj, Denis G. Pelli (New York University, 2022).
 
 Our contributions are as follows:
 * We present large-scale (148 human observers), public dataset on timed ImageNet [1] object recognition with 16 categories, across color, grayscale, 3 noise and 3 blur conditions. For each condition, we tested human performance for 5 reaction time (RT) values. This data provides a benchmark for the human speed-accuracy tradeoff and is specifically intended to facilitate comparison between neural networks and humans on timed object recognition.
